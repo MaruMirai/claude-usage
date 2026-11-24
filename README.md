@@ -50,3 +50,7 @@ State, all private to you, is in `~/.local/state/claude-usage/`: `log.jsonl`
 
 The usage endpoint and the credentials file's layout are Claude Code's own and
 undocumented, so a Claude Code update may change them.
+
+## License
+
+MIT, see [LICENSE](LICENSE).

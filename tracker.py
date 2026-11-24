@@ -259,17 +259,39 @@ def switch_to(uuid, quiet=False):
 
 
 def find_account(word, summary):
+    """The account to switch to, and if none, why not."""
     accounts = read_json(ACCOUNTS, {})
     saved = logins()
-    if word in (None, 'next', 'best'):
-        active = next((a for a in summary['accounts'] if a['active']), None)
-        choice = summary['best'] if word == 'best' else summary['next']
-        if choice and choice in saved and not (active and choice == active['uuid']):
-            return choice
-        others = [u for u in saved if not active or u != active['uuid']]
-        return others[0] if len(others) == 1 else None
-    hit = [u for u, i in accounts.items() if u.startswith(word) or i.get('name') == word]
-    return hit[0] if len(hit) == 1 else None
+    if word not in (None, 'next', 'best'):
+        hit = [u for u, i in accounts.items() if u.startswith(word) or i.get('name') == word]
+        if len(hit) != 1:
+            return None, 'no single account matches; saved logins: ' + ', '.join(
+                accounts.get(u, {}).get('name', u[:8]) for u in saved)
+        if hit[0] not in saved:
+            return None, f"no saved login for {word}: /login to it once in Claude Code first"
+        return hit[0], None
+    active = next((a for a in summary['accounts'] if a['active']), None)
+    others = [a for a in summary['accounts'] if a['uuid'] in saved and not a['active']]
+    if not others:
+        return None, 'no other saved login: /login to another account once in Claude Code first'
+    # best: the account to use now; next (and no word): the best other one.
+    choice = summary['best'] if word == 'best' else summary['next']
+    if choice and choice in saved and not (active and choice == active['uuid']):
+        return choice, None
+    pct = lambda a: f"5h {a['five'] or 0:.0f}%, week {a['week'] or 0:.0f}%"
+    if word == 'best' and active and usable(active):
+        return None, f"already on the best account, {active['name']} ({pct(active)})"
+    # Nothing else has room: say when the soonest frees up.
+    frees = []
+    for a in others:
+        at = [t for t, v in ((a['fiveReset'], a['five']), (a['weekReset'], a['week']))
+              if t and (v or 0) >= 95]
+        frees.append((max(at) if at else 0, a))
+    when, soonest = min(frees, key=lambda f: f[0])
+    lines = ['every other account is at a limit:'] + [
+        f"  {a['name']}: {pct(a)}" + (f", free from {hhmm(t)}" if t else '') for t, a in frees]
+    lines.append(f"staying on {active['name']} ({pct(active)})" if active else '')
+    return None, '\n'.join(l for l in lines if l)
 
 
 def auto_switch(summary):
@@ -531,10 +553,9 @@ def main():
     elif cmd == 'status':
         status()
     elif cmd == 'switch':
-        target = find_account(sys.argv[2] if len(sys.argv) > 2 else None, summarise())
+        target, why = find_account(sys.argv[2] if len(sys.argv) > 2 else None, summarise())
         if not target:
-            known = ', '.join(read_json(ACCOUNTS, {}).get(u, {}).get('name', u[:8]) for u in logins())
-            sys.exit('which account? saved logins: ' + (known or 'none yet'))
+            sys.exit(why)
         switch_to(target)
         write_page()
     elif cmd == 'offer':

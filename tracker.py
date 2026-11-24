@@ -41,8 +41,10 @@ HERE = os.path.dirname(os.path.abspath(__file__))
 USAGE_URL = 'https://api.anthropic.com/api/oauth/usage'
 # Percent of a limit at which to warn, and how high a limit may be on the
 # account suggested instead.
-WARN_AT = (80, 95)
-WEEK_WARN_AT = (85, 95)
+WARN_AT = (95, 100)
+WEEK_WARN_AT = (95, 100)
+# Percent of the 5-hour limit from which the status line suggests switching.
+HINT_AT = 80
 FREE_ENOUGH = 70
 # Weekly percent one full 5-hour window uses, until the log has enough to
 # measure it per account (Pro measured about 0.14 on 2026-11-23).
@@ -438,14 +440,29 @@ def notify(summary):
     best = pick(summary['accounts'], exclude=active['uuid'])
     if best is None and others:
         best = max(others, key=headroom)
+    # Ping only on the reading that crosses a level, not on every reading
+    # past it. The previous reading is this account's last one before now;
+    # one from an earlier window (its reset passed since) counts as 0.
+    mine = [r for r in load_log(time.time() - 8 * 86400) if r['account'] == active['uuid']]
+    before = mine[-2] if len(mine) >= 2 else None
     for label, key, reset_key, levels in (('5-hour', 'five', 'fiveReset', WARN_AT),
                                           ('weekly', 'week', 'weekReset', WEEK_WARN_AT)):
         value = active[key]
         if value is None:
             continue
+        was = 0.0
+        if before and before.get(key) is not None:
+            then_reset = parse_time(before.get(reset_key))
+            if not then_reset or then_reset > time.time():
+                was = before[key]
         for level in levels:
-            tag = f"{active['uuid']}:{key}:{active[reset_key]}:{level}"
-            if value < level or tag in sent:
+            if not (was < level <= value):
+                continue
+            # Once per window too, in case a reading wobbles back across a
+            # level; the reset time is rounded, as the endpoint gives it to a
+            # different fraction of a second on every reading.
+            tag = f"{active['uuid']}:{key}:{round((active[reset_key] or 0) / 600)}:{level}"
+            if tag in sent:
                 continue
             sent[tag] = time.time()
             msg = f"{active['name']} is at {value:.0f}% of its {label} limit (resets {hhmm(active[reset_key])})."
@@ -458,12 +475,12 @@ def notify(summary):
                 subprocess.Popen([sys.executable, os.path.abspath(__file__), 'offer', best['uuid'], msg],
                                  start_new_session=True, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
             else:
-                subprocess.run(['notify-send', '-a', 'Claude usage', '-u', 'critical' if level >= 95 else 'normal',
+                subprocess.run(['notify-send', '-a', 'Claude usage', '-u', 'critical',
                                 'Claude usage', msg], check=False)
     # Another account's week is going to waste faster: say so once per its week.
     best = next((a for a in summary['accounts'] if a['uuid'] == summary['best']), None)
     if best and not best['active']:
-        tag = f"{best['uuid']}:switch:{best['weekReset']}"
+        tag = f"{best['uuid']}:switch:{round((best['weekReset'] or 0) / 3600)}"
         if tag not in sent:
             sent[tag] = time.time()
             subprocess.run(['notify-send', '-a', 'Claude usage', 'Claude usage',
@@ -489,7 +506,7 @@ def status():
     nxt = next((a for a in s['accounts'] if a['uuid'] == s['next']), None)
     if best and not best['active']:
         text += f" → use {best['name']} (week resets {hhmm(best['weekReset'])})"
-    elif nxt and headroom(active) < 100 - WARN_AT[0]:
+    elif nxt and headroom(active) < 100 - HINT_AT:
         text += f" → switch to {nxt['name']}"
     print(text)
 

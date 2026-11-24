@@ -26,8 +26,8 @@ each login the first time it sees it.
 - `claude-usage auto on|off` – switch by itself when the logged-in account
   runs out (on by default).
 
-Notifications come at 80/95% of the 5-hour limit and 85/95% of the weekly
-one, with a **Switch now** button, and when another account's week is closer
+A notification comes once as a limit crosses 95% and once as it reaches 100%
+(each window, 5-hour and weekly), with a **Switch now** button, and when another account's week is closer
 to going to waste.
 
 ## How it works

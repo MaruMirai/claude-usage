@@ -16,8 +16,11 @@ each login the first time it sees it.
 ## Use
 
 - `claude-usage open` – the dashboard: a card per account (each limit, its
-  reset, full 5-hour sessions left to use this week) and a chart per account
-  on one time scale, with resets marked. It refreshes itself every minute.
+  reset, full 5-hour sessions left to use this week); two clocks, a 24-hour
+  face with each account's current 5-hour window and its reset, and a
+  Monday-to-Sunday face with each account's week and its reset; and a chart
+  for each limit, every account a line in its colour, resets marked. It
+  refreshes itself every minute.
 - `claude-switch [account|next|best]` – switch Claude Code to another saved
   login. Running sessions pick it up, as Claude Code reloads its credentials
   file when it changes.

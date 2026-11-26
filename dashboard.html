@@ -56,6 +56,16 @@
                     border: 1px solid var(--border); background: var(--surface-1); color: var(--text-secondary); }
   .filters button.on { background: var(--text-primary); color: var(--surface-1); border-color: var(--text-primary); }
   svg text.label { fill: var(--text-secondary); }
+  .clocks { display: grid; grid-template-columns: repeat(auto-fit, minmax(300px, 1fr)); gap: 12px; margin-top: 16px; }
+  .clock { background: var(--surface-1); border: 1px solid var(--border); border-radius: 8px; padding: 14px 16px;
+           display: flex; gap: 16px; align-items: center; flex-wrap: wrap; }
+  .clock svg { width: 200px; height: 200px; flex: none; }
+  .clock .face { fill: none; stroke: var(--grid); }
+  .clock .hand { stroke: var(--text-primary); stroke-width: 2; stroke-linecap: round; }
+  .clock .keys { flex: 1; min-width: 150px; font-size: 12px; }
+  .clock .keys div { margin: 6px 0; }
+  .clock .keys .when { color: var(--text-muted); }
+  .clock h2 { width: 100%; }
   code { font-size: 12px; }
   table { border-collapse: collapse; font-size: 12px; font-variant-numeric: tabular-nums; }
   td, th { padding: 3px 10px; text-align: right; border-bottom: 1px solid var(--grid); }
@@ -67,12 +77,11 @@
 <div class="sub" id="updated"></div>
 <div class="banner" id="banner"></div>
 <div class="cards" id="cards"></div>
-<div class="filters" id="range">
-  <button data-r="week" class="on">This week</button><button data-r="day">Last 24 hours</button>
-  <span class="legend" style="margin:0 0 0 12px"><span><span class="swatch" style="background:var(--s1)"></span>5-hour limit</span>
-  <span><span class="swatch" style="background:var(--s2)"></span>Weekly limit</span>
-  <span><svg width="18" height="10" style="width:18px;display:inline"><line x1="9" x2="9" y1="0" y2="10" stroke="var(--text-muted)" stroke-dasharray="2 2"/></svg>reset</span></span>
+<div class="clocks">
+  <div class="clock"><h2>Today: 5-hour resets</h2><svg id="clockDay" viewBox="-100 -100 200 200"></svg><div class="keys" id="keysDay"></div></div>
+  <div class="clock"><h2>This week: weekly resets</h2><svg id="clockWeek" viewBox="-100 -100 200 200"></svg><div class="keys" id="keysWeek"></div></div>
 </div>
+<div class="legend" id="legend" style="margin-top:20px"></div>
 <div id="charts"></div>
 <details><summary class="sub">All readings (table)</summary><div id="table"></div></details>
 <script>
@@ -125,11 +134,11 @@ document.getElementById('cards').innerHTML = S.accounts.map(a => {
     if (proj && proj.beforeReset) note += ` · full ~${fmtClock(proj.at * 1000)}`;
     else if (proj) note += ` · ${proj.perHour.toFixed(1)}%/h, won't fill`;
     return `<div class="meter"><div class="row"><span>${label}</span><span class="val">${val == null ? '–' : Math.round(val) + '%'}</span></div>
-      <div class="bar"><div style="width:${Math.min(100, val || 0)}%;background:var(${label === 'Weekly' ? '--s2' : '--s1'})"></div></div>
+      <div class="bar"><div style="width:${Math.min(100, val || 0)}%;background:${colour(a.uuid)};opacity:${label === 'Weekly' ? 1 : 0.75}"></div></div>
       <div class="note"><span class="status" style="color:var(--${lv})">${lv === 'good' ? '●' : lv === 'warn' ? '▲' : '■'} ${word}</span> · ${note}</div></div>`;
   };
   const age = Math.round((Date.now() - a.readAt * 1000) / 60000);
-  return `<div class="card ${a.active ? 'active' : ''}"><div class="head">
+  return `<div class="card ${a.active ? 'active' : ''}"><div class="head"><span class="swatch" style="background:${colour(a.uuid)}"></span>
     <h2>${esc(a.name)}</h2>${a.plan ? `<span class="tag">${esc(a.plan)}</span>` : ''}${a.active ? '<span class="tag">logged in</span>' : ''}
     ${a.uuid === S.best ? '<span class="tag">use now</span>' : a.uuid === S.next ? '<span class="tag">next</span>' : ''}</div>
     ${meter('5-hour', a.five, a.fiveReset, a.fiveProj)}${meter('Weekly', a.week, a.weekReset, a.weekProj)}
@@ -140,75 +149,156 @@ document.getElementById('cards').innerHTML = S.accounts.map(a => {
     <div class="note">${a.active ? '' : a.saved ? `Switch to it: <code>claude-switch ${esc(a.name)}</code> · ` : 'Login not saved yet: /login to it once in Claude Code · '}Last read ${age < 2 ? 'just now' : fmtIn(Date.now() + age * 60000) + ' ago'}${a.source === 'cached' ? ' (from Claude Code\'s cache)' : ''}</div></div>`;
 }).join('');
 
-// One chart per account: both limits on one 0-100% scale, resets marked.
-let range = 'week';
-function chart(acct, holder) {
+// Shared legend: one colour per account, the same on the cards, clocks and charts.
+document.getElementById('legend').innerHTML = S.accounts.map(a =>
+  `<span><span class="swatch" style="background:${colour(a.uuid)}"></span>${esc(a.name)}${a.active ? ' (logged in)' : ''}</span>`).join('')
+  + `<span><svg width="18" height="10" style="width:18px;display:inline"><line x1="9" x2="9" y1="0" y2="10" stroke="var(--text-muted)" stroke-dasharray="2 2"/></svg>reset</span>`;
+
+// Clocks. Each account is a ring, outermost first. The 24-hour face has
+// midnight at the top; on it each ring shows the account's current 5-hour
+// window, solid up to now and faint after, with a dot where it resets. The
+// week face runs Monday 00:00 round to Sunday; each ring shows that account's
+// week, solid for the part gone and faint for the part left, with a dot at
+// its reset.
+const polar = (deg, r) => { const a = (deg - 90) * Math.PI / 180; return [r * Math.cos(a), r * Math.sin(a)]; };
+function arc(r, d0, d1) {
+  if (d1 - d0 >= 359.99) d1 = d0 + 359.99;
+  const [x0, y0] = polar(d0, r), [x1, y1] = polar(d1, r);
+  return `M${x0.toFixed(2)} ${y0.toFixed(2)}A${r} ${r} 0 ${d1 - d0 > 180 ? 1 : 0} 1 ${x1.toFixed(2)} ${y1.toFixed(2)}`;
+}
+const RING = 74, RING_STEP = 11, RING_W = 7;
+const ringOf = i => RING - i * RING_STEP;
+function dayDeg(t) { const d = new Date(t); return (d.getHours() + d.getMinutes() / 60 + d.getSeconds() / 3600) / 24 * 360; }
+function weekStart(t) { const d = new Date(t); const back = (d.getDay() + 6) % 7; d.setHours(0, 0, 0, 0); return d.getTime() - back * 86400e3; }
+function weekDeg(t) { return (t - weekStart(now)) / (7 * 86400e3) * 360; }
+
+function face(svg, ticks, labels, handDeg) {
+  let g = `<circle class="face" r="${RING + 10}"/>`;
+  for (const [deg, long] of ticks) {
+    const [x0, y0] = polar(deg, RING + (long ? 4 : 7)), [x1, y1] = polar(deg, RING + 10);
+    g += `<line x1="${x0}" y1="${y0}" x2="${x1}" y2="${y1}" stroke="var(--text-muted)" stroke-width="${long ? 1.5 : 1}"/>`;
+  }
+  for (const [deg, text] of labels) { const [x, y] = polar(deg, RING + 19); g += `<text x="${x}" y="${y + 3.5}" text-anchor="middle">${text}</text>`; }
+  return g;
+}
+function hand(deg) {
+  const [x, y] = polar(deg, RING + 8);
+  return `<line class="hand" x1="0" y1="0" x2="${x}" y2="${y}"/><circle r="3" fill="var(--text-primary)"/>`;
+}
+function windowRing(i, startT, endT, degOf, col) {
+  // Solid from the window's start to now, faint from now to its end.
+  const r = ringOf(i), mid = Math.min(Math.max(now, startT), endT);
+  let a0 = degOf(startT), am = degOf(mid), a1 = degOf(endT);
+  // Unwrap so the arc runs clockwise from start to end.
+  while (am < a0) am += 360; while (a1 < am) a1 += 360;
+  let g = `<circle r="${r}" fill="none" stroke="var(--grid)" stroke-width="${RING_W}"/>`;
+  if (am > a0) g += `<path d="${arc(r, a0, am)}" fill="none" stroke="${col}" stroke-width="${RING_W}"/>`;
+  if (a1 > am) g += `<path d="${arc(r, am, a1)}" fill="none" stroke="${col}" stroke-width="${RING_W}" opacity="0.3"/>`;
+  const [x, y] = polar(a1, r);
+  g += `<circle cx="${x}" cy="${y}" r="4.5" fill="${col}" stroke="var(--surface-1)" stroke-width="2"/>`;
+  return g;
+}
+function clocks() {
+  // 24-hour face.
+  const dayTicks = [...Array(24).keys()].map(h => [h * 15, h % 6 === 0]);
+  let g = face(null, dayTicks, [[0, '0'], [90, '6'], [180, '12'], [270, '18']]);
+  const keysDay = [];
+  S.accounts.forEach((a, i) => {
+    const col = colour(a.uuid);
+    if (a.fiveReset && a.fiveReset * 1000 > now) {
+      g += windowRing(i, a.fiveReset * 1000 - 5 * 3600e3, a.fiveReset * 1000, dayDeg, col);
+      keysDay.push(`<div><span class="swatch" style="display:inline-block;background:${col}"></span> <b>${esc(a.name)}</b> ${Math.round(a.five || 0)}%<br>
+        <span class="when">resets ${fmtClock(a.fiveReset * 1000)}, in ${fmtIn(a.fiveReset * 1000)}</span></div>`);
+    } else {
+      g += `<circle r="${ringOf(i)}" fill="none" stroke="var(--grid)" stroke-width="${RING_W}"/>`;
+      keysDay.push(`<div><span class="swatch" style="display:inline-block;background:${col}"></span> <b>${esc(a.name)}</b> ${Math.round(a.five || 0)}%<br>
+        <span class="when">no window running: starts at first use</span></div>`);
+    }
+  });
+  document.getElementById('clockDay').innerHTML = g + hand(dayDeg(now));
+  document.getElementById('keysDay').innerHTML = keysDay.join('');
+
+  // Week face: a seventh per day, Monday first.
+  const weekTicks = [...Array(28).keys()].map(q => [q * 360 / 28, q % 4 === 0]);
+  const days = [...Array(7).keys()].map(k => [k * 360 / 7 + 360 / 14,
+    new Date(weekStart(now) + k * 86400e3).toLocaleDateString([], {weekday: 'narrow'})]);
+  g = face(null, weekTicks, days);
+  const keysWeek = [];
+  S.accounts.forEach((a, i) => {
+    const col = colour(a.uuid);
+    if (a.weekReset && a.weekReset * 1000 > now) {
+      g += windowRing(i, a.weekReset * 1000 - 7 * 86400e3, a.weekReset * 1000, weekDeg, col);
+      keysWeek.push(`<div><span class="swatch" style="display:inline-block;background:${col}"></span> <b>${esc(a.name)}</b> ${Math.round(a.week || 0)}%<br>
+        <span class="when">resets ${fmtClock(a.weekReset * 1000)}, in ${fmtIn(a.weekReset * 1000)}</span></div>`);
+    } else {
+      g += `<circle r="${ringOf(i)}" fill="none" stroke="var(--grid)" stroke-width="${RING_W}"/>`;
+      keysWeek.push(`<div><span class="swatch" style="display:inline-block;background:${col}"></span> <b>${esc(a.name)}</b> ${Math.round(a.week || 0)}%<br>
+        <span class="when">week not started: begins at first use</span></div>`);
+    }
+  });
+  document.getElementById('clockWeek').innerHTML = g + hand(weekDeg(now));
+  document.getElementById('keysWeek').innerHTML = keysWeek.join('');
+}
+clocks();
+
+// One chart per limit, every account a line in its colour, its resets dashed.
+function chart(holder, key, resetKey, title, sub, t0, t1, gap) {
   const box = document.createElement('div'); box.className = 'chart';
-  const sub = acct.weekReset ? `Week runs to ${fmtClock(acct.weekReset * 1000)} (in ${fmtIn(acct.weekReset * 1000)})` : 'Week not started';
-  box.innerHTML = `<h2>${esc(acct.name)}${acct.active ? ' <span class="tag">logged in</span>' : ''}</h2>
-    <div class="sub">${sub}. Gaps are times it couldn't be read.</div><svg></svg><div class="tip"></div>`;
+  box.innerHTML = `<h2>${title}</h2><div class="sub">${sub}</div><svg></svg><div class="tip"></div>`;
   holder.appendChild(box);
   const svg = box.querySelector('svg'), tip = box.querySelector('.tip');
-  const W = svg.clientWidth || 900, H = 210, L = 34, R = 64, T = 18, B = 22;
+  const W = svg.clientWidth || 900, H = 220, L = 34, R = 110, T = 10 + 13 * S.accounts.length, B = 22;
   svg.setAttribute('viewBox', `0 0 ${W} ${H}`); svg.style.height = H + 'px';
-  const [t0, t1] = SPAN;
   const span = t1 - t0, x = t => L + (t - t0) / span * (W - L - R), y = v => T + (1 - v / 100) * (H - T - B);
-  const rows = ROWS.filter(r => r.account === acct.uuid && r.t * 1000 >= t0 && r.t * 1000 <= t1);
   let g = '';
   for (const v of [0, 25, 50, 75, 100])
     g += `<line x1="${L}" x2="${W - R}" y1="${y(v)}" y2="${y(v)}" stroke="var(--grid)"/><text x="${L - 6}" y="${y(v) + 4}" text-anchor="end">${v}%</text>`;
-  const step = range === 'week' ? 86400e3 : 3 * 3600e3;
+  const step = span > 3 * 86400e3 ? 86400e3 : 3 * 3600e3;
   for (let t = Math.ceil(t0 / step) * step; t <= t1; t += step) {
     const d = new Date(t);
     g += `<text x="${x(t)}" y="${H - 6}" text-anchor="middle">${step >= 86400e3 ? d.toLocaleDateString([], {weekday: 'short', day: 'numeric'}) : d.toLocaleTimeString([], {hour: '2-digit', minute: '2-digit'})}</text>`;
   }
-  // Reset marks: every 5-hour reset seen in this span, the next one and the
-  // weekly one labelled.
-  const resets = [];
-  for (const r of rows) if (r.fiveReset) {
-    const t = Date.parse(r.fiveReset);
-    if (t >= t0 && t <= t1 && !resets.some(o => Math.abs(o - t) < 5 * 60e3)) resets.push(t);
-  }
-  if (acct.fiveReset && acct.fiveReset * 1000 <= t1 && !resets.some(o => Math.abs(o - acct.fiveReset * 1000) < 5 * 60e3)) resets.push(acct.fiveReset * 1000);
-  for (const t of resets) {
-    const upcoming = t > now;
-    g += `<line x1="${x(t)}" x2="${x(t)}" y1="${T}" y2="${H - B}" stroke="var(--s1)" stroke-opacity="${upcoming ? 0.9 : 0.45}" stroke-dasharray="3 3"/>`;
-    if (upcoming) g += `<text class="label" x="${x(t)}" y="${T - 6}" text-anchor="${x(t) > W - R - 70 ? 'end' : 'middle'}">5h resets ${fmtClock(t)}</text>`;
-  }
-  if (acct.weekReset && acct.weekReset * 1000 <= t1) {
-    const t = acct.weekReset * 1000;
-    g += `<line x1="${x(t)}" x2="${x(t)}" y1="${T}" y2="${H - B}" stroke="var(--s2)" stroke-dasharray="3 3"/>`;
-    g += `<text class="label" x="${Math.min(x(t), W - 4)}" y="${T - 6}" text-anchor="end">week resets ${fmtClock(t)}</text>`;
-  }
-  // Now, and the future shaded lightly.
   if (now < t1) g += `<rect x="${x(now)}" y="${T}" width="${x(t1) - x(now)}" height="${H - T - B}" fill="var(--grid)" opacity="0.35"/>`;
   g += `<line x1="${x(now)}" x2="${x(now)}" y1="${T}" y2="${H - B}" stroke="var(--text-muted)"/>`;
-  const series = [['five', 'var(--s1)', 20 * 60e3, '5-hour'], ['week', 'var(--s2)', 3 * 3600e3, 'weekly']];
-  for (const [key, col, gap, label] of series) {
+  const series = {}, ends = [];
+  S.accounts.forEach((a, i) => {
+    const col = colour(a.uuid);
+    const rs = ROWS.filter(r => r.account === a.uuid && r[key] != null && r.t * 1000 >= t0 && r.t * 1000 <= t1);
+    series[a.uuid] = rs;
+    // Resets: each one seen in the span, faint if past; the next labelled up top.
+    const resets = [];
+    for (const r of rs) if (r[resetKey]) {
+      const t = Date.parse(r[resetKey]);
+      if (t >= t0 && t <= t1 && !resets.some(o => Math.abs(o - t) < 5 * 60e3)) resets.push(t);
+    }
+    const next = a[resetKey] ? a[resetKey] * 1000 : null;
+    if (next && next <= t1 && !resets.some(o => Math.abs(o - next) < 5 * 60e3)) resets.push(next);
+    for (const t of resets)
+      g += `<line x1="${x(t)}" x2="${x(t)}" y1="${T}" y2="${H - B}" stroke="${col}" stroke-opacity="${t > now ? 0.9 : 0.35}" stroke-dasharray="3 3"/>`;
+    if (next && next > now && next <= t1) {
+      const lx = x(next), end = lx > W - R - 120;
+      g += `<text class="label" x="${lx + (end ? -4 : 4)}" y="${10 + 13 * i}" text-anchor="${end ? 'end' : 'start'}">${esc(a.name)} resets ${fmtClock(next)}</text>`;
+    }
+    if (!rs.length) return;
     let d = '', prev = null;
-    const rs = rows.filter(r => r[key] != null);
     for (const r of rs) {
       const t = r.t * 1000;
       d += (prev && t - prev.t * 1000 <= gap ? 'L' : 'M') + x(t).toFixed(1) + ' ' + y(r[key]).toFixed(1);
       prev = r;
     }
-    if (!rs.length) continue;
     g += `<path d="${d}" fill="none" stroke="${col}" stroke-width="2" stroke-linejoin="round" stroke-linecap="round"/>`;
     const last = rs[rs.length - 1];
     g += `<circle cx="${x(last.t * 1000)}" cy="${y(last[key])}" r="4" fill="${col}" stroke="var(--surface-1)" stroke-width="2"/>`;
-    // Where it heads at the current pace, up to its reset.
-    const p = key === 'five' ? acct.fiveProj : acct.weekProj;
+    const p = key === 'five' ? a.fiveProj : a.weekProj;
     if (p && p.beforeReset && p.at * 1000 <= t1)
       g += `<line x1="${x(last.t * 1000)}" y1="${y(last[key])}" x2="${x(p.at * 1000)}" y2="${y(100)}" stroke="${col}" stroke-width="1.5" stroke-dasharray="4 4"/>`;
-  }
-  // Direct labels at the right edge, kept apart.
-  const ends = series.map(([key, col, , label]) => {
-    const v = key === 'five' ? acct.five : acct.week; return v == null ? null : {label: `${label} ${Math.round(v)}%`, v};
-  }).filter(Boolean);
-  if (ends.length === 2 && Math.abs(y(ends[0].v) - y(ends[1].v)) < 13) {
-    const hi = ends[0].v >= ends[1].v ? 0 : 1; ends[hi].dy = -7; ends[1 - hi].dy = 7;
-  }
-  for (const e of ends) g += `<text class="label" x="${W - R + 6}" y="${y(e.v) + 4 + (e.dy || 0)}">${e.label}</text>`;
+    const v = a[key];
+    if (v != null) ends.push({label: `${a.name} ${Math.round(v)}%`, y: y(v)});
+  });
+  // Direct labels at the right edge, pushed apart so they don't overlap.
+  ends.sort((p, q) => p.y - q.y);
+  for (let k = 1; k < ends.length; k++) if (ends[k].y - ends[k - 1].y < 13) ends[k].y = ends[k - 1].y + 13;
+  for (const e of ends) g += `<text class="label" x="${W - R + 6}" y="${e.y + 4}">${esc(e.label)}</text>`;
   g += `<line class="hair" x1="0" x2="0" y1="${T}" y2="${H - B}" stroke="var(--text-muted)" visibility="hidden"/>`;
   svg.innerHTML = g;
   const hair = svg.querySelector('.hair');
@@ -217,44 +307,34 @@ function chart(acct, holder) {
     const t = t0 + (px - L) / (W - L - R) * span;
     if (t < t0 || t > t1) { svg.onmouseleave(); return; }
     hair.setAttribute('x1', px); hair.setAttribute('x2', px); hair.setAttribute('visibility', 'visible');
-    let near = null;
-    for (const row of rows) if (!near || Math.abs(row.t * 1000 - t) < Math.abs(near.t * 1000 - t)) near = row;
-    let html = `<div class="sub">${new Date(t).toLocaleString([], {weekday: 'short', hour: '2-digit', minute: '2-digit'})}</div>`;
-    if (near && Math.abs(near.t * 1000 - t) <= 20 * 60e3)
-      html += `<span class="swatch" style="display:inline-block;background:var(--s1)"></span> 5-hour <b>${near.five == null ? '–' : Math.round(near.five) + '%'}</b><br>
-               <span class="swatch" style="display:inline-block;background:var(--s2)"></span> weekly <b>${near.week == null ? '–' : Math.round(near.week) + '%'}</b>`;
-    else html += t > now ? 'ahead' : 'no reading';
-    tip.innerHTML = html; tip.style.display = 'block';
+    const lines = [];
+    for (const a of S.accounts) {
+      let near = null;
+      for (const row of series[a.uuid]) if (!near || Math.abs(row.t * 1000 - t) < Math.abs(near.t * 1000 - t)) near = row;
+      if (near && Math.abs(near.t * 1000 - t) <= gap)
+        lines.push(`<span class="swatch" style="display:inline-block;background:${colour(a.uuid)}"></span> ${esc(a.name)} <b>${Math.round(near[key])}%</b>`);
+    }
+    tip.innerHTML = `<div class="sub">${new Date(t).toLocaleString([], {weekday: 'short', hour: '2-digit', minute: '2-digit'})}</div>`
+      + (lines.length ? lines.join('<br>') : (t > now ? 'ahead' : 'no reading'));
+    tip.style.display = 'block';
     const cx = e.clientX - box.getBoundingClientRect().left;
     tip.style.left = Math.min(cx + 14, box.clientWidth - tip.offsetWidth - 8) + 'px';
     tip.style.top = (e.clientY - box.getBoundingClientRect().top - 10) + 'px';
   };
   svg.onmouseleave = () => { tip.style.display = 'none'; hair.setAttribute('visibility', 'hidden'); };
 }
-// One time span for every chart, so they line up: the weeks of all accounts
-// from the earliest start to the latest reset, or the last day to the latest
-// next 5-hour reset.
-let SPAN;
-function spanOf() {
-  if (range === 'week') {
-    const ends = S.accounts.map(a => a.weekReset ? a.weekReset * 1000 : now);
-    const t1 = Math.max(now, ...ends), t0 = Math.min(now - 86400e3, ...ends.map(t => t - 7 * 86400e3));
-    return [t0, t1];
-  }
-  const fives = S.accounts.map(a => a.fiveReset ? a.fiveReset * 1000 : now);
-  return [now - 24 * 3600e3, Math.max(now, ...fives) + 15 * 60e3];
-}
 const draw = () => {
-  SPAN = spanOf();
   const holder = document.getElementById('charts'); holder.innerHTML = '';
-  for (const a of S.accounts) chart(a, holder);
+  // 5-hour: the last day to just past the latest next 5-hour reset.
+  const fives = S.accounts.map(a => a.fiveReset ? a.fiveReset * 1000 : now);
+  chart(holder, 'five', 'fiveReset', '5-hour limit', 'Percent used over the last 24 hours, up to the next resets. Gaps are times an account couldn\'t be read.',
+        now - 24 * 3600e3, Math.max(now, ...fives) + 15 * 60e3, 20 * 60e3);
+  // Weekly: from the earliest week start to the latest weekly reset.
+  const ends = S.accounts.map(a => a.weekReset ? a.weekReset * 1000 : now);
+  chart(holder, 'week', 'weekReset', 'Weekly limit', 'Percent used over each account\'s week, up to its reset.',
+        Math.min(now - 86400e3, ...ends.map(t => t - 7 * 86400e3)), Math.max(now, ...ends) + 3600e3, 3 * 3600e3);
 };
-document.querySelectorAll('#range button').forEach(b => b.onclick = () => {
-  range = b.dataset.r; localStorage.setItem('range', range);
-  document.querySelectorAll('#range button').forEach(o => o.classList.toggle('on', o === b)); draw();
-});
-const savedRange = new URLSearchParams(location.search).get('range') || localStorage.getItem('range');
-if (savedRange) document.querySelector(`#range button[data-r="${savedRange}"]`)?.click(); else draw();
+draw();
 addEventListener('resize', draw);
 
 // Table view.

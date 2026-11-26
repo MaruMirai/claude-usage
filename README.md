@@ -6,6 +6,8 @@ and switches Claude Code between them without logging in again.
 
 Linux, Python 3 (standard library only), systemd user timers, `notify-send`.
 
+![The dashboard: a card per account, two reset clocks and a chart per limit (account names blurred)](screenshot.png)
+
 ## Install
 
     ./install.sh
@@ -17,7 +19,7 @@ each login the first time it sees it.
 
 - `claude-usage open` – the dashboard: a card per account (each limit, its
   reset, full 5-hour sessions left to use this week); two clocks, a 24-hour
-  face with each account's current 5-hour window and its reset, and a
+  face (noon at the top) with each account's current 5-hour window and its reset, and a
   Monday-to-Sunday face with each account's week and its reset; and a chart
   for each limit, every account a line in its colour, resets marked. It
   refreshes itself every minute.

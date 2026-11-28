@@ -44,7 +44,8 @@ refreshes a token itself, as that would replace the refresh token Claude Code
 holds.
 
 Which account to use: of those with room in both limits now, the one with the
-most weekly percent per hour still to use before its week resets, keeping to
+most weekly percent per hour still to use before its week resets (a week not
+started yet counts as one starting now), keeping to
 the logged-in one unless another is clearly more pressing.
 
 State, all private to you, is in `~/.local/state/claude-usage/`: `log.jsonl`

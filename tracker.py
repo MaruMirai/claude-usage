@@ -52,6 +52,7 @@ DEFAULT_WEEK_PER_FIVE = 0.14
 # Stay on the logged-in account unless another needs using this much more
 # urgently, so it doesn't flip back and forth.
 STICKY = 1.5
+WEEK_HOURS = 7 * 24
 # How far back the burn rate is measured for the projection, in seconds.
 RATE_WINDOW_5H = 45 * 60
 RATE_WINDOW_WEEK = 12 * 3600
@@ -377,9 +378,11 @@ def week_plan(a, ratio, measured, now):
         'sessionsLeft': room / per_session if per_session > 0 else None,
         # 5-hour sessions that fit before the reset, back to back.
         'sessionsFit': hours / 5 if hours else None,
-        # Weekly percent an hour to use it all by the reset; a week not
-        # started yet (no reset time) has nothing to lose.
-        'urgency': room / max(hours, 1) if hours else 0.0,
+        # Weekly percent an hour to use it all by the reset. A week not
+        # started yet (no reset time) is taken as starting now, which is what
+        # it becomes at first use: scoring it 0 would leave a fresh account
+        # idle while the others ran dry, and its score would jump at first use.
+        'urgency': room / max(hours if hours else WEEK_HOURS, 1),
     })
     return a
 
@@ -430,7 +433,7 @@ def pick(accts, exclude=None):
     """The account to use next so the least weekly allowance goes to waste:
     of those with room now, the one whose unused week is due to reset
     soonest for its size (most weekly percent an hour still to use). A week
-    not started yet comes last, as it doesn't start counting until it's used."""
+    not started yet counts as a full week that starts now."""
     open_ = [a for a in accts if usable(a) and a['uuid'] != exclude]
     if not open_:
         return None

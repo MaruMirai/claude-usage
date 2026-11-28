@@ -108,13 +108,13 @@ document.getElementById('updated').textContent =
   if (!active) { el.textContent = 'No reading yet for the logged-in account.'; return; }
   const pc = v => Math.round(v || 0) + '%';
   const why = a => a.weekReset ? `${pc(a.weekRoom)} of its week is unused (~${a.sessionsLeft.toFixed(1)} full 5-hour sessions) and it resets <b>${fmtClock(a.weekReset * 1000)}</b>, in ${fmtIn(a.weekReset * 1000)}`
-                               : `its week hasn't started, so nothing of it can go to waste yet`;
+                               : `its week hasn't started, so all of it is there to use, and starting it now gets it back sooner`;
   let msg;
   if (!best) {
     const soon = S.accounts.map(a => a.fiveReset).filter(Boolean).sort()[0];
     msg = `Every account is at a limit.${soon ? ` The next 5-hour reset is at <b>${fmtClock(soon * 1000)}</b>.` : ''}`;
   } else if (!best.active) {
-    msg = `${(active.five || 0) >= 95 || (active.week || 0) >= 98 ? `<b>${esc(active.name)}</b> is at its limit. ` : ''}Use <b>${esc(best.name)}</b>: ${why(best)}.`;
+    msg = `${(active.five || 0) >= 95 || (active.week || 0) >= 98 ? `<b>${esc(active.name)}</b> is at its limit. ` : ''}Use <b>${esc(best.name)}</b>${best.saved ? ` (<code>claude-switch best</code>)` : ''}: ${why(best)}.`;
     if (active.weekReset && (active.five || 0) < 95) msg += ` ${esc(active.name)}'s week resets later (${fmtClock(active.weekReset * 1000)}), so it can wait.`;
   } else {
     msg = `Stay on <b>${esc(active.name)}</b> (5h ${pc(active.five)}, week ${pc(active.week)}): ${why(active)}.`;
@@ -146,7 +146,7 @@ document.getElementById('cards').innerHTML = S.accounts.map(a => {
       ? `Left to use this week: ~<b>${a.sessionsLeft.toFixed(1)}</b> full 5-hour sessions, ${a.sessionsFit.toFixed(0)} fit before the reset${a.sessionsLeft > a.sessionsFit ? ' (some will go unused whatever you do)' : ''}`
       : 'Week not started: it begins counting at first use'}.
       <span title="Weekly percent one full 5-hour session uses">${a.ratioMeasured ? 'Session size measured' : 'Session size estimated'}: ${Math.round(a.ratio * 100)}% of the week.</span></div>
-    <div class="note">${a.active ? '' : a.saved ? `Switch to it: <code>claude-switch ${esc(a.name)}</code> · ` : 'Login not saved yet: /login to it once in Claude Code · '}Last read ${age < 2 ? 'just now' : fmtIn(Date.now() + age * 60000) + ' ago'}${a.source === 'cached' ? ' (from Claude Code\'s cache)' : ''}</div></div>`;
+    <div class="note">${a.active ? '' : a.saved ? `Switch to it: <code>claude-switch ${a.uuid === S.best ? 'best' : esc(a.name)}</code> · ` : 'Login not saved yet: /login to it once in Claude Code · '}Last read ${age < 2 ? 'just now' : fmtIn(Date.now() + age * 60000) + ' ago'}${a.source === 'cached' ? ' (from Claude Code\'s cache)' : ''}</div></div>`;
 }).join('');
 
 // Shared legend: one colour per account, the same on the cards, clocks and charts.
